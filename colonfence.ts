@@ -18,8 +18,7 @@ export function parseFenceRangesInSource(source: string): FenceRange[] {
 		const line = lines[i].trim();
 		if (!line.startsWith(":::")) continue;
 
-		if (line === ":::") {
-			if (stack.length === 0) continue;
+		if (line === ":::" && stack.length > 0) {
 			const top = stack.pop()!;
 			if (stack.length === 0) {
 				const bodySource = lines

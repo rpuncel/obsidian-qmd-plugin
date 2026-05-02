@@ -72,4 +72,13 @@ describe("parseFenceRangesInSource", () => {
 		expect(ranges).toHaveLength(1);
 		expect(ranges[0].attrs.isCallout()).toBe(false);
 	});
+
+	it("detects a bare fence with no attributes", () => {
+		const source = ":::\nsome content\n:::";
+		const ranges = parseFenceRangesInSource(source);
+		expect(ranges).toHaveLength(1);
+		expect(ranges[0].startLine).toBe(0);
+		expect(ranges[0].endLine).toBe(2);
+		expect(ranges[0].bodySource).toBe("some content");
+	});
 });
