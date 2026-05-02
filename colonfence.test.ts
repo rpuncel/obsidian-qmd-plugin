@@ -66,6 +66,27 @@ describe("parseFenceRangesInSource", () => {
 		expect(ranges[0].endLine).toBe(4);
 	});
 
+	it("bodySource includes inner fence text and trailing content within outer", () => {
+		// The inner ::: closer must not prematurely end the outer body.
+		const source =
+			"::: {.callout-note}\nBefore inner.\n\n::: {.callout-tip}\nInner body.\n:::\n\nAfter inner.\n:::";
+		const ranges = parseFenceRangesInSource(source);
+		expect(ranges).toHaveLength(1);
+		expect(ranges[0].bodySource).toBe(
+			"Before inner.\n\n::: {.callout-tip}\nInner body.\n:::\n\nAfter inner."
+		);
+	});
+
+	it("returns one top-level range when two sibling inner fences are nested", () => {
+		// Two inner ::: pairs inside one outer — depth counter must handle both closes.
+		const source =
+			"::: {.columns}\nOuter.\n\n::: {.column}\nLeft.\n:::\n\n::: {.column}\nRight.\n:::\n\nEnd.\n:::";
+		const ranges = parseFenceRangesInSource(source);
+		expect(ranges).toHaveLength(1);
+		expect(ranges[0].startLine).toBe(0);
+		expect(ranges[0].endLine).toBe(12);
+	});
+
 	it("detects generic (non-callout) fences", () => {
 		const source = "::: {.python}\ncode\n:::";
 		const ranges = parseFenceRangesInSource(source);
