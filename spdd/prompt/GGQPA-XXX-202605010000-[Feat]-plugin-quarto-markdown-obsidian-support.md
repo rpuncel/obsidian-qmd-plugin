@@ -39,12 +39,16 @@ class QuartoDivAttributes {
     +calloutType() string
 }
 
-class ColonFenceProcessor {
-    +process(el: HTMLElement, ctx: MarkdownPostProcessorContext) void
+class FenceRange {
+    +startLine: number
+    +endLine: number
+    +attrs: QuartoDivAttributes
+    +bodySource: string
 }
 
-class CalloutRenderer {
-    +render(container: HTMLElement, attrs: QuartoDivAttributes, children: Node[]) HTMLElement
+class ColonFenceProcessor {
+    +ColonFenceProcessor(app: App)
+    +process(el: HTMLElement, ctx: MarkdownPostProcessorContext) Promise~void~
 }
 
 class CodeChunkProcessor {
@@ -69,8 +73,8 @@ QuartoPlugin --> ColonFenceProcessor : registers post-processor
 QuartoPlugin --> CodeChunkProcessor : registers post-processor
 QuartoPlugin --> QuartoDivStateField : registers editor extension
 QuartoPlugin --> ShortcodeViewPlugin : registers editor extension
+ColonFenceProcessor --> FenceRange : parses source into
 ColonFenceProcessor --> QuartoDivAttributes : parses fence header into
-ColonFenceProcessor --> CalloutRenderer : delegates callout rendering to
 QuartoDivStateField --> FenceMarkerWidget : creates line decorations using
 ```
 
@@ -86,11 +90,12 @@ QuartoDivStateField --> FenceMarkerWidget : creates line decorations using
    - Retain the settings infrastructure and lifecycle methods
 
 2. **Preview/Reading mode — `registerMarkdownPostProcessor`**
-   - Quarto's `:::` fences are rendered by Obsidian as plain `<p>` elements containing `:::` text — the post-processor must reconstruct block structure by walking sibling DOM nodes
-   - Strategy: iterate child nodes of the post-processor element; when a `<p>` node whose trimmed text starts with `:::` is found, parse its attributes, collect subsequent siblings until a matching closing `<p>:::` is found, then replace the collected range with a styled `<div>`
-   - Nesting handled via a depth counter: an opening `:::` increments depth, a closing `:::` decrements; reconstruction only triggers at depth 0
-   - Chunking risk: if the opening and closing `:::` land in different post-processor invocations, reconstruction is not possible — document this limitation; do not crash
-   - Callout blocks are a specialisation of colon-fence rendering: if `attrs.isCallout()` is true, render a structured callout box (icon + title + body) using CSS classes; otherwise render a generic styled fence div
+   - Quarto's `:::` fences that span a blank line are split across multiple Obsidian post-processor invocations; DOM sibling-walking cannot span invocation boundaries, so fence structure must be reconstructed from source text instead
+   - Strategy: call `ctx.getSectionInfo(el)` to obtain `{text, lineStart, lineEnd}` — `text` is the full file source; parse `FenceRange[]` from it using `parseFenceRangesInSource`; for the section whose `lineStart` matches the range's `startLine`, render the full callout (clearing `el` and building a new styled `div`); for all other sections inside the range, call `el.empty()` to suppress the raw content
+   - Depth counting in `parseFenceRangesInSource`: a line starting with `:::` followed by attributes is always an opener; a bare `:::` is a closer if the depth stack is non-empty, or an opener (bare div) if the stack is empty; only top-level (depth 0) closed ranges are returned
+   - Callout blocks are a specialisation of colon-fence rendering: if `attrs.isCallout()` is true, render a structured callout box (title div + body div) using CSS classes and render the body markdown via `MarkdownRenderer.render(app, range.bodySource, bodyDiv, ctx.sourcePath, child)` (async); otherwise render a generic styled fence div the same way
+   - Register the rendered body component via `ctx.addChild(new MarkdownRenderChild(bodyDiv))` so Obsidian manages its lifecycle
+   - If `ctx.getSectionInfo(el)` returns null (e.g. element was rendered by an inner `MarkdownRenderer.render` call), return immediately — no processing
    - Executable code chunk post-processor: scan `<pre><code>` blocks for a language identifier matching `/^\{[a-z]+\}/`; add a `<span class="qmd-code-lang">` badge above the block
 
 3. **Live-editor mode — CodeMirror 6 `registerEditorExtension`**
@@ -116,22 +121,21 @@ QuartoDivStateField --> FenceMarkerWidget : creates line decorations using
 6. `ShortcodeViewPlugin` is a module-level `const` constructed via `ViewPlugin.fromClass()` with an internal `MatchDecorator` — no standalone class needed
 
 ### Dependencies
-1. `QuartoPlugin.onload()` creates and registers `ColonFenceProcessor`, `CodeChunkProcessor`, `QuartoDivStateField`, `ShortcodeViewPlugin`
-2. `ColonFenceProcessor.process()` calls `parseQuartoDivAttributes()` (shared utility) and `CalloutRenderer.render()`
+1. `QuartoPlugin.onload()` creates and registers `ColonFenceProcessor(this.app)`, `CodeChunkProcessor`, `QuartoDivStateField`, `ShortcodeViewPlugin`
+2. `ColonFenceProcessor.process()` calls `parseFenceRangesInSource()` (pure function in same module) and `parseQuartoDivAttributes()` (shared utility); uses `MarkdownRenderer.render()` and `MarkdownRenderChild` from the Obsidian API
 3. `QuartoDivStateField.update()` calls `parseQuartoDivAttributes()` (same shared utility) for opening fence lines
 4. `FenceMarkerWidget` is instantiated by `QuartoDivStateField` when building decorations
 5. `ShortcodeViewPlugin` owns its internal `MatchDecorator` — no cross-module dependency
 
 ### File / Module Layout
 ```
-main.ts          — QuartoPlugin entry point; registers all extensions
-colonfence.ts    — ColonFenceProcessor + CalloutRenderer
-codechunk.ts     — CodeChunkProcessor (new file)
-quartoattrs.ts   — parseQuartoDivAttributes() shared utility + QuartoDivAttributes type (new file)
-statefield.ts    — QuartoDivStateField (rewrite) + FenceMarkerWidget
-matchdecorator.ts — ShortcodeViewPlugin (repurpose existing file; remove placeholder widget)
-emoji.ts         — retain as-is or remove (not used by Quarto support)
-styles.css       — all visual styling for callouts, fence markers, code chunk badges
+main.ts           — QuartoPlugin entry point; registers all extensions
+colonfence.ts     — ColonFenceProcessor + FenceRange interface + parseFenceRangesInSource()
+codechunk.ts      — CodeChunkProcessor
+quartoattrs.ts    — parseQuartoDivAttributes() shared utility + QuartoDivAttributes type
+statefield.ts     — QuartoDivStateField + FenceMarkerWidget
+matchdecorator.ts — ShortcodeViewPlugin
+styles.css        — all visual styling for callouts, fence markers, code chunk badges
 ```
 
 ---
@@ -173,36 +177,49 @@ styles.css       — all visual styling for callouts, fence markers, code chunk 
 5. Method: `QuartoDivAttributes.calloutType(): string`
    - Return first class starting with `"callout-"`, stripped of prefix; e.g. `"note"`, `"warning"`. Returns `""` if not a callout.
 
-### Task 3: Rewrite `colonfence.ts` — `ColonFenceProcessor` + `CalloutRenderer`
+### Task 3: Rewrite `colonfence.ts` — `ColonFenceProcessor` + `FenceRange` + `parseFenceRangesInSource`
 
-1. Responsibility: Post-processor that reconstructs colon-fence block structure in Reading View and renders callout blocks with appropriate styling
+1. Responsibility: Post-processor that reconstructs colon-fence block structure in Reading View by working from source line ranges rather than DOM siblings, correctly handling fences that span multiple post-processor invocations (e.g. multi-paragraph bodies separated by blank lines)
 
-2. `ColonFenceProcessor.process(el: HTMLElement, ctx: MarkdownPostProcessorContext): void`
-   - Get all child nodes of `el` as an array: `Array.from(el.childNodes)`
-   - Iterate with an index `i`; when a child is an `HTMLElement` with tag `P` and `child.innerText.trim()` matches `/^:::/`:
-     - Record this as `fenceStart` at index `i`; parse `attrs = parseQuartoDivAttributes(child.innerText.trim())`
-     - Initialize `depth = 1`, `contentNodes: Node[] = []`, advance `j = i + 1`
-     - While `j < nodes.length` and `depth > 0`:
-       - If `nodes[j]` is a `<p>` starting with `:::`: if line is a pure closing `:::` (no attributes after trimming), decrement depth; else increment depth
-       - If `depth > 0`: push `nodes[j]` to `contentNodes`
-       - Advance `j`
-     - If `depth !== 0` after the loop: no matching closing fence found in this chunk — skip (do not crash; leave raw nodes)
-     - Otherwise: call `CalloutRenderer.render(el, attrs, contentNodes)` to get a replacement `div`; replace nodes from `i` to `j-1` by calling `el.replaceChildren(...)` or by inserting the new div before `nodes[i]` and removing `nodes[i]` through `nodes[j-1]`
-     - Set `i = i + 1` (skip to after the reconstructed block)
-   - Guard all `<p>` text access with null checks: `if (node instanceof HTMLElement && node.tagName === 'P' && node.innerText)`
+2. `FenceRange` interface (exported):
+   - `startLine: number` — 0-indexed line number of the opening `:::` in the full file source
+   - `endLine: number` — 0-indexed line number of the closing `:::`
+   - `attrs: QuartoDivAttributes` — parsed attributes from the opening fence line
+   - `bodySource: string` — source text between opening and closing lines, joined and trimmed
 
-3. `CalloutRenderer.render(container: HTMLElement, attrs: QuartoDivAttributes, children: Node[]): HTMLElement`
-   - Create outer `div.qmd-colon-fence`
-   - If `attrs.isCallout()`:
-     - Add class `qmd-callout qmd-callout-${attrs.calloutType()}`
-     - Create `div.qmd-callout-title` with text `attrs.title || capitalise(attrs.calloutType())`
-     - Create `div.qmd-callout-body` and append cloned `children` into it
-     - Append title div then body div to outer div
-   - Else:
-     - Add class `qmd-generic-fence`
-     - If `attrs.classes.length > 0`: add `data-qmd-classes="${attrs.classes.join(' ')}"` attribute
-     - Append cloned `children` directly to outer div
-   - Return outer div
+3. `parseFenceRangesInSource(source: string): FenceRange[]` (exported pure function):
+   - Split source on `/\r?\n/` to get lines
+   - Maintain a stack of open fences; iterate lines:
+     - If a line trims to `:::` exactly AND the stack is non-empty → closing fence: pop the stack; if stack is now empty, emit a top-level `FenceRange` with `bodySource = lines.slice(top.startLine + 1, i).join('\n').trim()`
+     - If a line trims to `:::` exactly AND the stack is empty → bare opener (no-attribute div): push `{startLine: i, attrs: parseQuartoDivAttributes('')}` onto stack
+     - If a line starts with `:::` but is not a bare `:::` → attributed opener: push `{startLine: i, attrs: parseQuartoDivAttributes(line)}` onto stack
+     - Lines not starting with `:::` are skipped
+   - Returns only top-level (outermost) ranges; inner/nested fences are consumed by the depth counter but not emitted
+
+4. `ColonFenceProcessor` constructor takes `app: App`
+
+5. `ColonFenceProcessor.process(el, ctx): Promise<void>` (async):
+   - Call `ctx.getSectionInfo(el)`; if it returns null, return immediately (no processing — this element was not rendered from the main source)
+   - Call `parseFenceRangesInSource(info.text)` to get all top-level fence ranges in the file
+   - Find the containing range: `ranges.find(r => r.startLine <= info.lineStart && info.lineEnd <= r.endLine)`
+   - If no containing range found: return (section is not inside any fence — default rendering applies)
+   - If `info.lineStart !== containing.startLine`: call `el.empty()` and return (this is an interior or closing section; the opener section handles rendering the full block)
+   - If `info.lineStart === containing.startLine`: this is the opener section — render the full callout:
+     - Call `el.empty()` to clear the raw content
+     - Create outer `div.qmd-colon-fence`
+     - If `containing.attrs.isCallout()`:
+       - Add classes `qmd-callout` and `qmd-callout-${containing.attrs.calloutType()}`
+       - Create `div.qmd-callout-title` with text `containing.attrs.title || capitalise(containing.attrs.calloutType())`
+       - Create `div.qmd-callout-body`
+       - Create `new MarkdownRenderChild(bodyDiv)`, register via `ctx.addChild(child)`
+       - Await `MarkdownRenderer.render(this.app, containing.bodySource, bodyDiv, ctx.sourcePath, child)`
+       - Append title div then body div to outer div
+     - Else (generic fence):
+       - Add class `qmd-generic-fence`
+       - If `containing.attrs.classes.length > 0`: set `data-qmd-classes` attribute
+       - Create `new MarkdownRenderChild(outer)`, register via `ctx.addChild(child)`
+       - Await `MarkdownRenderer.render(this.app, containing.bodySource, outer, ctx.sourcePath, child)`
+     - Append outer div to `el`
 
 ### Task 4: Create `codechunk.ts` — `CodeChunkProcessor`
 
@@ -212,7 +229,7 @@ styles.css       — all visual styling for callouts, fence markers, code chunk 
    - Find all `<code>` elements inside `el`: `el.findAll("code")`
    - For each code element:
      - Check if its parent `<pre>` element has a class matching `/language-\{(\w+)\}/` or if the code element itself has such a class
-     - Alternatively: check if the first line of `code.innerText` matches `/^\{[a-z]+\}/` (for cases where Obsidian passes the language spec as text)
+     - Alternatively: check if the first line of `code.textContent` matches `/^\{[a-z]+\}/` (for cases where Obsidian passes the language spec as text)
      - If matched: extract language name (e.g. `python`, `r`, `julia`)
      - Create `span.qmd-code-lang` with text content equal to the language name
      - Insert the badge as the first child of `pre.parentElement` or directly before the `<pre>` element
@@ -272,7 +289,7 @@ styles.css       — all visual styling for callouts, fence markers, code chunk 
 
 3. `onload()` registration sequence:
    ```
-   const colonfenceProcessor = new ColonFenceProcessor();
+   const colonfenceProcessor = new ColonFenceProcessor(this.app);
    const codeChunkProcessor = new CodeChunkProcessor();
    this.registerMarkdownPostProcessor(colonfenceProcessor.process.bind(colonfenceProcessor));
    this.registerMarkdownPostProcessor(codeChunkProcessor.process.bind(codeChunkProcessor));
@@ -342,9 +359,11 @@ styles.css       — all visual styling for callouts, fence markers, code chunk 
 
 7. **Graceful degradation pattern**: Any block-level reconstruction that fails (e.g., no matching closing fence in current chunk) must leave the original DOM nodes untouched and return without throwing. Log a `console.debug` at most — no `console.error` or uncaught exceptions.
 
-8. **Module structure**: One concern per file. Do not add multiple unrelated processors to the same file. New feature files go alongside existing ones at the project root (no `src/` directory — project uses flat layout per esbuild config).
+8. **`textContent` over `innerText` for code elements**: Use `element.textContent` to read code element text — `innerText` is layout-dependent and returns `undefined` in non-browser environments (test runners, headless rendering). For `<code>` elements containing plain text, `textContent` is equivalent and universally reliable.
 
-9. **Settings**: Boolean settings default to `true` (opt-in features enabled by default). Settings keys use camelCase. Settings tab uses Obsidian's `Setting` API with `.setName()`, `.setDesc()`, and `.addToggle()`.
+9. **Module structure**: One concern per file. Do not add multiple unrelated processors to the same file. New feature files go alongside existing ones at the project root (no `src/` directory — project uses flat layout per esbuild config).
+
+10. **Settings**: Boolean settings default to `true` (opt-in features enabled by default). Settings keys use camelCase. Settings tab uses Obsidian's `Setting` API with `.setName()`, `.setDesc()`, and `.addToggle()`.
 
 ---
 
@@ -358,13 +377,14 @@ styles.css       — all visual styling for callouts, fence markers, code chunk 
 
 2. **Performance constraints**:
    - `QuartoDivStateField.update()` MUST return immediately (without rebuilding decorations) when `!tr.docChanged`
-   - Post-processor DOM walks MUST exit early if no `:::` text is found anywhere in the element (`!el.innerText.includes(":::")`)
    - `buildDecorations()` iterates lines once — no nested loops or repeated document scans
+   - `parseFenceRangesInSource` scans the source once per post-processor invocation; no caching is needed for V1 (source files are small)
 
-3. **Safety constraints on DOM reconstruction**:
-   - Fence reconstruction MUST use a depth counter to correctly handle nested `:::` divs — a flat search for the next closing `:::` is prohibited
-   - If a closing fence is not found within the current post-processor chunk, the reconstruction MUST be skipped entirely — partial reconstruction (wrapping only the opening) is prohibited
-   - All node cloning before DOM mutation MUST use `node.cloneNode(true)` to avoid detached-node errors
+3. **Safety constraints on fence reconstruction**:
+   - Fence reconstruction MUST use `ctx.getSectionInfo(el)` to obtain source line ranges — DOM sibling-walking is prohibited because it cannot span post-processor chunk boundaries
+   - `parseFenceRangesInSource` MUST use a depth counter (stack) to correctly handle nested `:::` divs; a flat search for the next closing `:::` is prohibited
+   - If `ctx.getSectionInfo(el)` returns null, the post-processor MUST return immediately without modifying `el` — this covers elements rendered by inner `MarkdownRenderer.render` calls
+   - Interior sections (those within a fence range but not at the opener line) MUST be cleared with `el.empty()` — partial rendering or leaving raw `:::` text is prohibited
 
 4. **CodeMirror 6 decoration constraints**:
    - Line decorations from `QuartoDivStateField` MUST be built using `Decoration.line()` (not `Decoration.replace()`) — replace decorations on multiline ranges require complex range management and will cause cursor artifacts
@@ -386,6 +406,7 @@ styles.css       — all visual styling for callouts, fence markers, code chunk 
    - Do NOT implement callout collapse/expand toggle behavior
    - Do NOT attempt cross-reference resolution (`@fig-`, `@tbl-`) in V1 — visual flagging only if time permits
    - Do NOT add any runtime dependencies beyond those already in `package.json` (`@codemirror/language`, `obsidian`) — no new npm packages
+   - Nested callouts inside a callout body will be passed as raw markdown to `MarkdownRenderer.render`; if `getSectionInfo` returns null for those inner elements (typical for renderer-created nodes), inner fences will not receive styled rendering — this is accepted graceful degradation for V1
 
 8. **Build constraints**:
    - `esbuild.config.mjs` must not be modified — all new files are imported from `main.ts` and resolved by the existing bundler configuration
