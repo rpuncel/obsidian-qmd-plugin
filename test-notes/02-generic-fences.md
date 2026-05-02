@@ -15,7 +15,7 @@ This simulates a Quarto columns div. No special rendering in V1 — just the gen
 A bare opening fence followed by a bare closing fence:
 
 :::
-This content is inside a fence with no attributes at all.
+This content is inside a fence with no attributes at all. It should render as a plain grey-bordered div, identical to a named-class generic fence.
 :::
 
 ## Fence with multiple classes
