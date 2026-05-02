@@ -1,8 +1,97 @@
-/*
+/* ── Generic colon-fence container ────────────────────────────────────── */
+.qmd-colon-fence {
+	border-left: 3px solid var(--color-base-50);
+	padding: 0.5em 1em;
+	margin: 0.5em 0;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+/* ── Callout base ─────────────────────────────────────────────────────── */
+.qmd-callout {
+	border-radius: 4px;
+	padding: 0.75em 1em;
+	margin: 0.75em 0;
+}
 
-If your plugin does not need CSS, delete this file.
+.qmd-callout-title {
+	font-weight: 600;
+	margin-bottom: 0.4em;
+}
 
-*/
+.qmd-callout-title::before {
+	margin-right: 0.4em;
+}
+
+/* ── Callout variants ─────────────────────────────────────────────────── */
+.qmd-callout-note {
+	border-left: 4px solid #4a90d9;
+	background: rgba(74, 144, 217, 0.08);
+}
+.qmd-callout-note .qmd-callout-title::before {
+	content: "ℹ";
+	color: #4a90d9;
+}
+
+.qmd-callout-warning {
+	border-left: 4px solid #e6a817;
+	background: rgba(230, 168, 23, 0.08);
+}
+.qmd-callout-warning .qmd-callout-title::before {
+	content: "⚠";
+	color: #e6a817;
+}
+
+.qmd-callout-important {
+	border-left: 4px solid #d94a4a;
+	background: rgba(217, 74, 74, 0.08);
+}
+.qmd-callout-important .qmd-callout-title::before {
+	content: "✖";
+	color: #d94a4a;
+}
+
+.qmd-callout-tip {
+	border-left: 4px solid #2ecc71;
+	background: rgba(46, 204, 113, 0.08);
+}
+.qmd-callout-tip .qmd-callout-title::before {
+	content: "✔";
+	color: #2ecc71;
+}
+
+.qmd-callout-caution {
+	border-left: 4px solid #e67e22;
+	background: rgba(230, 126, 34, 0.08);
+}
+.qmd-callout-caution .qmd-callout-title::before {
+	content: "🔥";
+	color: #e67e22;
+}
+
+/* ── Live-editor fence markers (CodeMirror) ───────────────────────────── */
+.cm-qmd-fence-open,
+.cm-qmd-fence-body,
+.cm-qmd-fence-close {
+	background: rgba(74, 144, 217, 0.06);
+	border-left: 2px solid #4a90d9;
+}
+
+.cm-qmd-shortcode {
+	color: var(--color-purple);
+	font-style: italic;
+}
+
+/* ── Executable code chunk badge ──────────────────────────────────────── */
+.qmd-code-lang {
+	display: inline-block;
+	font-size: 0.7em;
+	font-family: var(--font-monospace);
+	background: var(--color-base-30);
+	color: var(--color-base-70);
+	border-radius: 3px;
+	padding: 1px 6px;
+	margin-bottom: 2px;
+}
+
+.qmd-code-chunk {
+	border-top: 2px solid var(--color-base-30);
+}
