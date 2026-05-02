@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(node esbuild.config.mjs production)",
+      "Bash(npm test *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
