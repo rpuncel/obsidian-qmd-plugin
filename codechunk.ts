@@ -19,7 +19,7 @@ export class CodeChunkProcessor {
 
 			// Check first line of code content for {lang} pattern
 			if (!langName) {
-				const firstLine = (code.innerText.split("\n")[0] ?? "").trim();
+				const firstLine = (code.textContent?.split("\n")[0] ?? "").trim();
 				const firstLineMatch = firstLine.match(/^\{([a-z]+)\}/);
 				if (firstLineMatch) {
 					langName = firstLineMatch[1];
